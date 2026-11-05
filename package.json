@@ -1,0 +1,19 @@
+{
+  "name": "clusterry",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FigJam plugin: cluster post-its, links and images by emergent themes (OpenAI embeddings).",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.142.0",
+    "dotenv": "^18.0.9",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

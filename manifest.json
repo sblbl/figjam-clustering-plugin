@@ -1,0 +1,13 @@
+{
+  "name": "Clusterry",
+  "id": "clusterry-dev-0001",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figjam"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["https://api.openai.com"],
+    "reasoning": "Embeds and names board items with the OpenAI API."
+  }
+}
