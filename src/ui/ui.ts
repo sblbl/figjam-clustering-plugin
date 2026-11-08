@@ -1,10 +1,11 @@
 import { applyMerge, DEFAULT_PARAMS, GROUP_BY_PARAMS, isUnclear, normalize, proposeMerges, updateClusters } from './cluster'
 import { layoutCluster } from './layout'
 import { parseCaption } from '../caption'
-import { facetKey, fullMeta } from '../hash'
-import { captionImage, describeAlong, embed, nameClusters } from './openai'
+import { facetKey, fullMeta, judgeKey } from '../hash'
+import { topicTitle } from './judge'
+import { captionImage, describeAlong, embed, judgeTopic, nameClusters } from './openai'
 import { GAP, NOTE_SIZE, PAD } from '../types'
-import type { BoardItem, Cache, Params, Placed, Plan, PlanFrame, State, ToMain, ToUi } from '../types'
+import type { BoardItem, Cache, Mode, Params, Placed, Plan, PlanFrame, State, ToMain, ToUi } from '../types'
 
 const $ = (id: string) => document.getElementById(id)!
 const logEl = $('log')
@@ -13,6 +14,17 @@ const tight = $('tight') as HTMLInputElement
 const pageSel = $('page') as HTMLSelectElement
 const boardEl = $('board') as HTMLInputElement
 const groupEl = $('group') as HTMLTextAreaElement
+const topicEl = $('topic') as HTMLTextAreaElement
+const modeEls = [...document.querySelectorAll<HTMLInputElement>('input[name=mode]')]
+const getMode = (): Mode => (modeEls.find((m) => m.checked)?.value === 'extract' ? 'extract' : 'cluster')
+function applyMode() {
+  const ex = getMode() === 'extract'
+  $('topicBox').classList.toggle('hidden', !ex)
+  $('groupBox').classList.toggle('hidden', ex)
+  $('tightBox').classList.toggle('hidden', ex)
+  runBtn.textContent = ex ? 'Extract topic' : 'Cluster board'
+}
+modeEls.forEach((m) => (m.onchange = applyMode))
 let settingsLoaded = false
 const send = (m: ToMain) => parent.postMessage({ pluginMessage: m }, '*')
 const log = (s: string, err = false) => {
@@ -45,7 +57,7 @@ function start(merges: [string, string][]) {
   runBtn.disabled = true
   $('merges').innerHTML = ''
   log('Reading board…')
-  send({ type: 'run', scope: pageSel.value, boardName: boardEl.value, groupBy: groupEl.value, merges })
+  send({ type: 'run', scope: pageSel.value, boardName: boardEl.value, groupBy: groupEl.value, mode: getMode(), topic: topicEl.value, merges })
 }
 
 function paramsFromSlider(groupBy: boolean): Params {
@@ -106,6 +118,51 @@ async function work(msg: Extract<ToUi, { type: 'work' }>) {
   let faceted = 0
   const metaOf = (i: BoardItem) => fullMeta(i.meta, entry(i).m)
   const fKey = (i: BoardItem) => facetKey(groupBy, i.key, metaOf(i))
+
+  // "Extract topic": keep only the items that are about the topic, in a single frame
+  if (msg.mode === 'extract') {
+    const topic = msg.topic
+    const jKey = (i: BoardItem) => judgeKey(topic, i.key, metaOf(i))
+    const need = usable.filter((i) => !newCache[jKey(i)] && !cache[jKey(i)])
+    if (need.length) {
+      log(`Checking ${need.length} items against “${topic}”…`)
+      const verdicts = await judgeTopic(topic, need.map((i) => ({ text: entry(i).t, meta: metaOf(i) })))
+      need.forEach((i, n) => (newCache[jKey(i)] = { t: verdicts[n] ? 'y' : 'n', e: [] }))
+    }
+    const matched = usable.filter((i) => (newCache[jKey(i)] ?? cache[jKey(i)]).t === 'y')
+    const members = matched.map((i) => i.id)
+    const rawVec = (id: string) => normalize(entry(byId.get(id)!).e)
+    const res = layoutCluster(
+      members.map((id) => {
+        const it = byId.get(id)!
+        const p: Placed | undefined = placed[id]
+        return { id, vec: rawVec(id), w: it.w, h: it.h, fixed: p && p.cluster === 'topic' ? { x: p.x, y: p.y } : undefined }
+      }),
+      { pad: PAD, gap: GAP, top: PAD },
+    )
+    const name = topicTitle(topic)
+    const xState: State = {
+      clusters: members.length ? [{ id: 'topic', name, members, namedSize: members.length, notes: [] }] : [],
+      unsorted: [],
+      nextId: 1,
+      keys: Object.fromEntries(usable.map((i) => [i.id, jKey(i)])),
+      mode: 'extract',
+      topic,
+    }
+    const xPlan: Plan = {
+      state: xState,
+      newCache,
+      frames: members.length
+        ? [{ id: 'topic', name, notes: [], notesChanged: false, items: members.map((id) => ({ id, ...res.positions[id] })), width: res.width, height: res.height }]
+        : [],
+      merges: [],
+      stats: { items: usable.length, embedded: embeddable.length, captioned: imgs.length, cached: items.length - todo.length, named: 0, faceted: 0, judged: need.length, matched: members.length },
+    }
+    lastPlan = xPlan
+    send({ type: 'plan', plan: xPlan })
+    log('Writing to the board…')
+    return
+  }
   if (groupBy) {
     const need = usable.filter((i) => !newCache[fKey(i)] && !cache[fKey(i)])
     if (need.length) {
@@ -190,7 +247,7 @@ async function work(msg: Extract<ToUi, { type: 'work' }>) {
     newCache,
     frames,
     merges,
-    stats: { items: usable.length, embedded: embeddable.length, captioned: imgs.length, cached: items.length - todo.length, named: toName.length, faceted },
+    stats: { items: usable.length, embedded: embeddable.length, captioned: imgs.length, cached: items.length - todo.length, named: toName.length, faceted, judged: 0, matched: 0 },
   }
   lastPlan = plan
   send({ type: 'plan', plan })
@@ -216,6 +273,10 @@ onmessage = async (ev) => {
       if (msg.settings && !settingsLoaded) {
         boardEl.value = msg.settings.boardName
         groupEl.value = msg.settings.groupBy
+        topicEl.value = msg.settings.topic ?? ''
+        const m = modeEls.find((x) => x.value === (msg.settings!.mode ?? 'cluster'))
+        if (m) m.checked = true
+        applyMode()
       }
       settingsLoaded = true
     } else if (msg.type === 'status') log(msg.message)
@@ -227,7 +288,9 @@ onmessage = async (ev) => {
       const s = lastPlan?.stats
       log(
         msg.summary +
-          (s ? `\n\nAPI work this run: ${s.embedded} embedded, ${s.captioned} images described, ${s.faceted ? s.faceted + ' described by your grouping, ' : ''}${s.named} clusters named; ${s.cached} items reused from cache.` : ''),
+          (s && lastPlan?.state.mode === 'extract'
+            ? `\n\nAPI work this run: ${s.judged} items checked against the topic, ${s.embedded} embedded, ${s.captioned} images described; ${s.cached} items reused from cache.`
+            : s ? `\n\nAPI work this run: ${s.embedded} embedded, ${s.captioned} images described, ${s.faceted ? s.faceted + ' described by your grouping, ' : ''}${s.named} clusters named; ${s.cached} items reused from cache.` : ''),
       )
       const box = $('merges')
       box.innerHTML = ''

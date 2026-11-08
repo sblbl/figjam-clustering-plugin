@@ -23,3 +23,8 @@ export function fullMeta(meta: string, extra?: string): string {
 export function facetKey(groupBy: string, itemKey: string, meta = ''): string {
   return `f:${hashStr(groupBy.toLowerCase())}:${itemKey}${meta ? ':' + hashStr(meta) : ''}`
 }
+
+/** Cache key for "does this item belong to this topic?" (metadata is included: a topic may concern who or when). */
+export function judgeKey(topic: string, itemKey: string, meta = ''): string {
+  return `x:${hashStr(topic.toLowerCase())}:${itemKey}${meta ? ':' + hashStr(meta) : ''}`
+}

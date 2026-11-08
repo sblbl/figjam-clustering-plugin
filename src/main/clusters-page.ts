@@ -44,7 +44,7 @@ async function copyOf(src: SceneNode, text: string): Promise<SceneNode> {
   }
 }
 
-export async function applyPlan(plan: Plan, items: BoardItem[], page: PageNode): Promise<string> {
+export async function applyPlan(plan: Plan, items: BoardItem[], page: PageNode, mode: 'cluster' | 'extract' = 'cluster', topic = ''): Promise<string> {
   const itemById = new Map(items.map((i) => [i.id, i]))
   const sections = new Map(ownSections(page).map((s) => [s.getPluginData('clusterId'), s]))
   const copies = new Map<string, SceneNode>()
@@ -138,6 +138,13 @@ export async function applyPlan(plan: Plan, items: BoardItem[], page: PageNode):
   await figma.setCurrentPageAsync(page)
   figma.viewport.scrollAndZoomIntoView(page.children)
 
+  if (mode === 'extract') {
+    const n = plan.frames[0]?.items.length ?? 0
+    return n === 0
+      ? `no items match “${topic}”.`
+      : `${n} item${n > 1 ? 's' : ''} about “${topic}”` +
+          `${created ? `, ${created} newly copied` : ''}${rebuilt ? `, ${rebuilt} rebuilt after edits` : ''}${removed ? `, ${removed} no longer matching or deleted, removed` : ''}.`
+  }
   const clusters = plan.frames.filter((f) => f.id !== 'unsorted').length
   const unsorted = plan.frames.find((f) => f.id === 'unsorted')?.items.length ?? 0
   return (

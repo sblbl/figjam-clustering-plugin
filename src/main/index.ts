@@ -1,5 +1,5 @@
-import { facetKey, fullMeta, normalizeGroupBy } from '../hash'
-import type { BoardItem, Cache, Plan, ToMain, ToUi } from '../types'
+import { facetKey, fullMeta, judgeKey, normalizeGroupBy } from '../hash'
+import type { BoardItem, Cache, Mode, Plan, ToMain, ToUi } from '../types'
 import { applyPlan, clearBoard, collectPlaced } from './clusters-page'
 import { assertBoardNameFree, DEFAULT_BOARD_NAME, ensureBoardPage, findPage, isOutputPage } from './pages'
 import { readBoard } from './read-board'
@@ -12,14 +12,18 @@ let lastItems: BoardItem[] = []
 let lastCache: Cache = {}
 let lastScope = 'all'
 let lastGroupBy = ''
+let lastMode: Mode = 'cluster'
+let lastTopic = ''
 let lastPage: PageNode | null = null
 
-/** Cache entries worth keeping/sending: raw ones for items on the board now, and descriptions for the current grouping. */
+/** Cache entries worth keeping/sending: raw ones for items on the board now, plus the current grouping's descriptions or topic verdicts. */
 function liveKeys(fresh: Cache = {}): Set<string> {
   const live = new Set<string>()
   for (const i of lastItems) {
     live.add(i.key)
-    if (lastGroupBy) live.add(facetKey(lastGroupBy, i.key, fullMeta(i.meta, (fresh[i.key] ?? lastCache[i.key])?.m)))
+    const meta = fullMeta(i.meta, (fresh[i.key] ?? lastCache[i.key])?.m)
+    if (lastGroupBy) live.add(facetKey(lastGroupBy, i.key, meta))
+    if (lastTopic) live.add(judgeKey(lastTopic, i.key, meta))
   }
   return live
 }
@@ -31,7 +35,7 @@ async function postPages(selected?: string) {
     type: 'pages',
     pages,
     selected: selected && (selected === 'all' || pages.some((p) => p.id === selected)) ? selected : fallback,
-    settings: (await loadSettings()) ?? { boardName: DEFAULT_BOARD_NAME, groupBy: '' },
+    settings: (await loadSettings()) ?? { boardName: DEFAULT_BOARD_NAME, groupBy: '', mode: 'cluster', topic: '' },
   })
 }
 
@@ -41,14 +45,17 @@ figma.ui.onmessage = async (msg: ToMain) => {
       await postPages()
     } else if (msg.type === 'run') {
       const boardName = msg.boardName.trim().slice(0, 60)
-      const groupBy = normalizeGroupBy(msg.groupBy)
+      const mode: Mode = msg.mode === 'extract' ? 'extract' : 'cluster'
+      const groupBy = mode === 'cluster' ? normalizeGroupBy(msg.groupBy) : ''
+      const topic = mode === 'extract' ? normalizeGroupBy(msg.topic) : ''
       if (!boardName) return post({ type: 'error', message: 'Give the new board a name.' })
+      if (mode === 'extract' && !topic) return post({ type: 'error', message: 'Type the topic to extract.' })
       assertBoardNameFree(boardName)
       if (msg.scope !== 'all' && !figma.root.children.some((p) => p.id === msg.scope)) {
         await postPages()
         return post({ type: 'error', message: 'That page no longer exists. Pick another one.' })
       }
-      await saveSettings({ boardName, groupBy: msg.groupBy })
+      await saveSettings({ boardName, groupBy: msg.groupBy, mode, topic: msg.topic })
 
       lastCache = await loadCache()
       lastItems = await readBoard(lastCache, (message) => post({ type: 'status', message }), msg.scope)
@@ -58,9 +65,17 @@ figma.ui.onmessage = async (msg: ToMain) => {
       lastPage = page
       lastScope = msg.scope
       lastGroupBy = groupBy
+      lastMode = mode
+      lastTopic = topic
       let state = loadState(page)
-      if (!state || (state.scope ?? 'all') !== msg.scope || (state.groupBy ?? '') !== groupBy) {
-        // new board, or a different page / grouping than this board was built with: start its clusters afresh
+      if (
+        !state ||
+        (state.scope ?? 'all') !== msg.scope ||
+        (state.mode ?? 'cluster') !== mode ||
+        (state.groupBy ?? '') !== groupBy ||
+        (state.topic ?? '') !== topic
+      ) {
+        // new board, or a different page / grouping / topic than this board was built with: start it afresh
         // (embeddings stay cached, so this costs little)
         await clearBoard(page)
         clearState(page)
@@ -70,12 +85,12 @@ figma.ui.onmessage = async (msg: ToMain) => {
       const live = liveKeys()
       const cache: Cache = {}
       for (const [k, v] of Object.entries(lastCache)) if (live.has(k)) cache[k] = v
-      post({ type: 'work', items: lastItems, cache, state, placed: await collectPlaced(page), merges: msg.merges ?? [], groupBy })
+      post({ type: 'work', items: lastItems, cache, state, placed: await collectPlaced(page), merges: msg.merges ?? [], groupBy, mode, topic })
     } else if (msg.type === 'plan') {
       const plan: Plan = msg.plan
       const page = lastPage!
-      const summary = await applyPlan(plan, lastItems, page)
-      saveState(page, { ...plan.state, scope: lastScope, groupBy: lastGroupBy })
+      const summary = await applyPlan(plan, lastItems, page, lastMode, lastTopic)
+      saveState(page, { ...plan.state, scope: lastScope, groupBy: lastGroupBy, mode: lastMode, topic: lastTopic })
       await saveCache(lastCache, plan.newCache, liveKeys(plan.newCache))
       post({ type: 'applied', ok: true, summary: `Board “${page.name}”: ${summary}` })
       await postPages(lastScope)

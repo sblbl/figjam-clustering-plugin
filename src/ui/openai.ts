@@ -1,3 +1,5 @@
+import { parseVerdicts } from './judge'
+
 declare const __OPENAI_API_KEY__: string
 
 const EMBED_MODEL = 'text-embedding-3-small'
@@ -144,4 +146,48 @@ export async function describeAlong(groupBy: string, items: { text: string; meta
     for (const it of parsed.items ?? []) if (Number.isInteger(it.i) && it.i >= 0 && it.i < slice.length) out[start + it.i] = String(it.v ?? '').trim()
   }
   return out.map((v) => v || 'unclear')
+}
+
+/**
+ * "Topic extraction": decide for each item whether it is about the user's topic. Precision matters (the user wants
+ * ONLY the elements of that topic), so items that merely share a word with it, or are generic, are rejected.
+ */
+export async function judgeTopic(topic: string, items: { text: string; meta: string }[]): Promise<boolean[]> {
+  const out: boolean[] = new Array(items.length).fill(false)
+  const BATCH = 40
+  const batches: number[] = []
+  for (let s = 0; s < items.length; s += BATCH) batches.push(s)
+  let next = 0
+  await Promise.all(
+    Array.from({ length: Math.min(3, batches.length) }, async () => {
+      while (next < batches.length) {
+        const start = batches[next++]
+        const slice = items.slice(start, start + BATCH)
+        const listing = slice
+          .map((t, i) => `${i}: CONTENT: ${t.text.slice(0, 500).replace(/\s+/g, ' ') || '(none)'}\n   METADATA: ${t.meta}`)
+          .join('\n')
+        const r = await post<{ choices: { message: { content: string } }[] }>('chat/completions', {
+          model: CHAT_MODEL,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'system',
+              content:
+                `You select items from a workshop whiteboard that belong to a topic. The topic is: "${topic}". ` +
+                'Each item has CONTENT (what it says or shows) and METADATA (author, time, type, colour, section, page, site). ' +
+                'Mark an item as a match only if its content is substantively about the topic: it discusses it directly, or is an example, question, idea, reference or reaction that clearly concerns it. ' +
+                'Do NOT match items that only share a word with the topic, that are generic or off-topic, or that are only vaguely related. ' +
+                'Use METADATA only when the topic itself is about it (for example a person, a time, a colour or a kind of item). ' +
+                'Reply as JSON: {"items":[{"i":0,"match":true}]} with one entry per numbered item.',
+            },
+            { role: 'user', content: listing },
+          ],
+        })
+        const verdicts = parseVerdicts(r.choices[0].message.content, slice.length)
+        verdicts.forEach((v, k) => (out[start + k] = v))
+      }
+    }),
+  )
+  return out
 }

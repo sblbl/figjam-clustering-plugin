@@ -40,6 +40,9 @@ export interface State {
   scope?: string
   /** the 'group by' prompt these clusters were built with ('' = plain themes) */
   groupBy?: string
+  /** 'extract' boards hold only the items that matched `topic`, in one frame */
+  mode?: Mode
+  topic?: string
 }
 
 export const EMPTY_STATE: State = { clusters: [], unsorted: [], nextId: 1, keys: {} }
@@ -86,12 +89,12 @@ export interface Plan {
   newCache: Cache
   frames: PlanFrame[]
   merges: { a: string; b: string; sim: number; aName: string; bName: string }[]
-  stats: { items: number; embedded: number; captioned: number; cached: number; named: number; faceted: number }
+  stats: { items: number; embedded: number; captioned: number; cached: number; named: number; faceted: number; judged: number; matched: number }
 }
 
 // main <-> ui messages
 export type ToUi =
-  | { type: 'work'; items: BoardItem[]; cache: Cache; state: State; placed: Record<string, Placed>; merges: [string, string][]; groupBy: string }
+  | { type: 'work'; items: BoardItem[]; cache: Cache; state: State; placed: Record<string, Placed>; merges: [string, string][]; groupBy: string; mode: Mode; topic: string }
   | { type: 'applied'; ok: true; summary: string }
   | { type: 'error'; message: string }
   | { type: 'status'; message: string }
@@ -99,14 +102,18 @@ export type ToUi =
 
 export type ToMain =
   | { type: 'ready' }
-  | { type: 'run'; scope: string; boardName: string; groupBy: string; merges?: [string, string][] }
+  | { type: 'run'; scope: string; boardName: string; groupBy: string; mode: Mode; topic: string; merges?: [string, string][] }
   | { type: 'plan'; plan: Plan }
   | { type: 'reset'; boardName: string }
   | { type: 'close' }
 
+export type Mode = 'cluster' | 'extract'
+
 export interface Settings {
   boardName: string
   groupBy: string
+  mode?: Mode
+  topic?: string
 }
 
 export const NOTE_SIZE = 240

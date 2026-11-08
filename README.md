@@ -13,6 +13,11 @@ FigJam plugin that reads a board's post-its, text, shapes, link cards and images
 **The build inlines `OPENAI_API_KEY` into `dist/ui.html`. Never publish or share `dist/`.**
 
 ## The panel
+- **Mode** — *Cluster* (below) or *Extract topic*.
+- **Topic** (extract mode) — type a topic and only the items that are **about it** are copied to the board, in one frame titled with the topic,
+  placed by similarity. The model judges every item (content, plus metadata if the topic is about who/when/what kind); it is deliberately strict:
+  items that only share a word with the topic, or are vaguely related, are left out. Verdicts are cached per topic, so re-running only judges new
+  items; items that stop matching (or are deleted) are removed from the board, and the ones already placed don't move.
 - **New board name** — the page the clusters are written to. Same name = update that board; a new name = a new page, so you can keep several
   groupings side by side. Each board remembers its own clusters. (A page that isn't a Clusterry board is never written to.)
 - **Group by** — optional free text, e.g. *"what each person is asking for"*, *"emotional tone"*, *"which stage of the experience it concerns"*.
